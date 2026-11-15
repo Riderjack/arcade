@@ -3,4 +3,6 @@ tank-battle/
 air-hockey/
 falling-blocks/
 snake-duel/
+*.new/
+*.old/
 update.log
