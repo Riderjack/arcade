@@ -1,0 +1,336 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Arcade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  canvas { display: block; margin: auto; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="1920" height="1080"></canvas>
+<script>
+// =====================================================================
+//  CONFIG  -  this is the only part you normally need to change
+// =====================================================================
+const CONFIG = {
+  // The game list. To add a game: put its folder next to menu.html,
+  // then copy one line below and change the words.
+  //   name     = what shows on the tile
+  //   folder   = the folder name (the menu opens folder/index.html)
+  //   tagline  = the small line under the name
+  //   color    = the tile's side bar and glow color
+  //   comingSoon: true  = shown dimmed, can't be picked yet
+  GAMES: [
+    { name: "TANK BATTLE",    folder: "tank-battle",    tagline: "First to 5 hits",    color: "#6b7a3a" },
+    { name: "AIR HOCKEY",     folder: "air-hockey",     tagline: "First to 7 goals",   color: "#4da6ff" },
+    { name: "FALLING BLOCKS", folder: "falling-blocks", tagline: "Last well standing", color: "#ff3fa4" },
+    { name: "SNAKE DUEL",     folder: "snake-duel",     tagline: "Coming soon",        color: "#39ff6a", comingSoon: true },
+  ],
+
+  // true  = joysticks are mounted turned sideways, so "push toward the
+  //         other player" moves the highlight UP for both players.
+  // false = use the normal up/down axis of each stick.
+  ROTATE_STICKS: true,
+
+  // Seconds with no input before the menu starts cycling by itself.
+  ATTRACT_DELAY_SEC: 30,
+
+  COLORS: {
+    background: "#1a1c1f",
+    grid:       "rgba(255,255,255,0.05)",
+    title:      "#ffd23a",
+    subtitle:   "#c9c9c9",
+    tile:       "#2a2d31",
+    text:       "#ffffff",
+    dimText:    "#7d8288",
+    outline:    "#000000",
+    padOk:      "#39ff6a",
+    padMissing: "#ff4a4a",
+  },
+
+  // 0 = silent, 1 = loud. 0.15 is a good tabletop level.
+  SOUND_VOLUME: 0.15,
+};
+// =====================================================================
+
+
+// ---------- canvas setup: design at 1920x1080, scale to fit the window ----------
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+function fitToWindow() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  canvas.style.width = 1920 * s + "px";
+  canvas.style.height = 1080 * s + "px";
+  canvas.style.marginTop = (innerHeight - 1080 * s) / 2 + "px";
+}
+addEventListener("resize", fitToWindow);
+fitToWindow();
+
+
+// ---------- menu state ----------
+let selected = 0;            // which game is highlighted (shared by both players)
+let launching = null;        // time the launch started, or null
+let lastInputTime = performance.now();
+let lastAttractStep = 0;
+let frame = 0;
+
+
+// ---------- sound (Web Audio, created on first input) ----------
+let audio = null;
+function ensureAudio() {
+  if (!audio) { try { audio = new AudioContext(); } catch (e) { audio = null; } }
+}
+function tone(freq, start, length, type) {
+  if (!audio) return;
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = type || "square";
+  osc.frequency.value = freq;
+  const t = audio.currentTime + start;
+  gain.gain.setValueAtTime(CONFIG.SOUND_VOLUME, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+  osc.connect(gain); gain.connect(audio.destination);
+  osc.start(t); osc.stop(t + length);
+}
+const sounds = {
+  tick:  () => tone(660, 0, 0.05),
+  chime: () => { tone(523, 0, 0.12); tone(659, 0.09, 0.12); tone(784, 0.18, 0.25); },
+  nope:  () => tone(140, 0, 0.18, "sawtooth"),
+};
+
+
+// ---------- actions ----------
+function noteInput() {
+  lastInputTime = performance.now();
+  ensureAudio();
+}
+function moveSelection(dir) {
+  if (launching) return;
+  selected = (selected + dir + CONFIG.GAMES.length) % CONFIG.GAMES.length;
+  sounds.tick();
+}
+function launchSelected() {
+  if (launching) return;
+  const game = CONFIG.GAMES[selected];
+  if (game.comingSoon) { sounds.nope(); return; }
+  launching = performance.now();
+  sounds.chime();
+  setTimeout(() => { window.location.href = game.folder + "/index.html"; }, 400);
+}
+
+
+// ---------- keyboard ----------
+addEventListener("keydown", (e) => {
+  noteInput();
+  const k = e.key.toLowerCase();
+  if (k === "w" || k === "arrowup")   moveSelection(-1);
+  if (k === "s" || k === "arrowdown") moveSelection(1);
+  if (k === "enter" || k === "j" || k === "1") launchSelected();
+});
+
+
+// ---------- gamepads ----------
+// One push = one step. Hold = repeat after 350 ms, then every 150 ms.
+const DEAD_ZONE = 0.5, REPEAT_DELAY = 350, REPEAT_RATE = 150;
+const LAUNCH_BUTTONS = [0, 1, 2, 8, 9];
+const padState = {};   // per pad index: { dir, heldSince, lastRepeat, launchHeld }
+
+function readDirection(pad) {
+  const pressed = (i) => pad.buttons[i] && pad.buttons[i].pressed;
+  if (pressed(12)) return -1;   // d-pad up
+  if (pressed(13)) return 1;    // d-pad down
+  let v;
+  if (CONFIG.ROTATE_STICKS) {
+    // Player 1 (pad 0) sits on the left: pushing right = toward the opponent = up.
+    // Player 2 (pad 1) sits on the right: pushing left = toward the opponent = up.
+    const x = pad.axes[0] || 0;
+    v = pad.index % 2 === 0 ? -x : x;
+  } else {
+    v = pad.axes[1] || 0;       // normal: stick forward (negative) = up
+  }
+  if (v < -DEAD_ZONE) return -1;
+  if (v > DEAD_ZONE) return 1;
+  return 0;
+}
+
+function pollGamepads(now) {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const pad of pads) {
+    if (!pad) continue;
+    const st = padState[pad.index] || (padState[pad.index] = { dir: 0, heldSince: 0, lastRepeat: 0, launchHeld: true });
+
+    // movement with edge detection + auto-repeat
+    const dir = readDirection(pad);
+    if (dir !== 0 && dir !== st.dir) {
+      noteInput(); moveSelection(dir);
+      st.heldSince = now; st.lastRepeat = now;
+    } else if (dir !== 0 && now - st.heldSince > REPEAT_DELAY && now - st.lastRepeat > REPEAT_RATE) {
+      noteInput(); moveSelection(dir);
+      st.lastRepeat = now;
+    }
+    st.dir = dir;
+
+    // launch on button press (not hold). launchHeld starts true so a button
+    // still held from the previous game doesn't instantly relaunch.
+    const launch = LAUNCH_BUTTONS.some((i) => pad.buttons[i] && pad.buttons[i].pressed);
+    if (launch && !st.launchHeld) { noteInput(); launchSelected(); }
+    st.launchHeld = launch;
+  }
+}
+
+function padConnected(index) {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  return !!pads[index];
+}
+
+
+// ---------- attract mode ----------
+function attract(now) {
+  if (launching) return;
+  if (now - lastInputTime < CONFIG.ATTRACT_DELAY_SEC * 1000) return;
+  if (now - lastAttractStep > 2500) {
+    selected = (selected + 1) % CONFIG.GAMES.length;
+    lastAttractStep = now;
+  }
+}
+
+
+// ---------- chunky pixel font for the title (5x7 blocks) ----------
+const PIXEL_FONT = {
+  A: ["01110","10001","10001","11111","10001","10001","10001"],
+  C: ["01110","10001","10000","10000","10000","10001","01110"],
+  D: ["11110","10001","10001","10001","10001","10001","11110"],
+  E: ["11111","10000","10000","11110","10000","10000","11111"],
+  R: ["11110","10001","10001","11110","10100","10010","10001"],
+  " ": ["00000","00000","00000","00000","00000","00000","00000"],
+};
+function pixelText(text, cx, cy, size, color) {
+  const charW = 6 * size, w = text.length * charW - size;
+  const x0 = cx - w / 2;
+  const y0 = cy - 3.5 * size;
+  // black outline pass first, then the color pass on top
+  for (const pass of [0, 1]) {
+    ctx.fillStyle = pass === 0 ? CONFIG.COLORS.outline : color;
+    const grow = pass === 0 ? 4 : 0;
+    for (let i = 0; i < text.length; i++) {
+      const g = PIXEL_FONT[text[i]] || PIXEL_FONT[" "];
+      for (let r = 0; r < 7; r++)
+        for (let c = 0; c < 5; c++)
+          if (g[r][c] === "1")
+            ctx.fillRect(x0 + i * charW + c * size - grow, y0 + r * size - grow, size + grow * 2, size + grow * 2);
+    }
+  }
+}
+
+
+// ---------- background: slow grid + drifting pixel stars ----------
+const stars = Array.from({ length: 40 }, () => ({
+  x: Math.random() * 1920, y: Math.random() * 1080,
+  speed: 0.1 + Math.random() * 0.3, size: Math.random() < 0.3 ? 6 : 3,
+}));
+function drawBackground() {
+  ctx.fillStyle = CONFIG.COLORS.background;
+  ctx.fillRect(0, 0, 1920, 1080);
+  const shift = (frame * 0.3) % 60;
+  ctx.strokeStyle = CONFIG.COLORS.grid; ctx.lineWidth = 1;
+  for (let x = -60 + shift; x < 1920; x += 60) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 1080); ctx.stroke(); }
+  for (let y = 0; y < 1080; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1920, y); ctx.stroke(); }
+  for (const s of stars) {
+    s.y += s.speed; if (s.y > 1080) { s.y = -6; s.x = Math.random() * 1920; }
+    ctx.fillStyle = `rgba(255,255,255,${0.25 + 0.2 * Math.sin(frame / 30 + s.x)})`;
+    ctx.fillRect(Math.round(s.x), Math.round(s.y), s.size, s.size);
+  }
+  // center divider between the two copies
+  ctx.fillStyle = "#000"; ctx.fillRect(956, 0, 8, 1080);
+}
+
+
+// ---------- one copy of the menu (drawn twice, rotated) ----------
+// Inside this function the copy is drawn upright, centered on (0,0).
+// Available space: 1080 wide (x -540..540) by 960 tall (y -480..480).
+function drawMenuCopy(padIndex, now) {
+  pixelText("ARCADE", 0, -385, 16, CONFIG.COLORS.title);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = 'bold 34px "Courier New", monospace';
+  ctx.fillStyle = CONFIG.COLORS.subtitle;
+  ctx.fillText("PICK A GAME", 0, -290);
+
+  const tileW = 880, tileH = 132, gap = 22;
+  const top = -220;
+  CONFIG.GAMES.forEach((game, i) => {
+    const on = i === selected;
+    const cy = top + i * (tileH + gap) + tileH / 2;
+    const flashing = on && launching && Math.floor((now - launching) / 70) % 2 === 0;
+    ctx.save();
+    ctx.translate(0, cy);
+    if (on) ctx.scale(1.06, 1.06);
+    if (game.comingSoon) ctx.globalAlpha = 0.45;
+
+    // glow behind the highlighted tile
+    if (on) { ctx.shadowColor = game.color; ctx.shadowBlur = 30 + 10 * Math.sin(frame / 10); }
+    ctx.fillStyle = flashing ? "#ffffff" : CONFIG.COLORS.tile;
+    ctx.fillRect(-tileW / 2, -tileH / 2, tileW, tileH);
+    ctx.shadowBlur = 0;
+
+    // color side bar + hard outline
+    ctx.fillStyle = game.color;
+    ctx.fillRect(-tileW / 2, -tileH / 2, 26, tileH);
+    ctx.lineWidth = 4; ctx.strokeStyle = on ? game.color : CONFIG.COLORS.outline;
+    ctx.strokeRect(-tileW / 2, -tileH / 2, tileW, tileH);
+    ctx.strokeStyle = CONFIG.COLORS.outline;
+    ctx.strokeRect(-tileW / 2 - 4, -tileH / 2 - 4, tileW + 8, tileH + 8);
+
+    // name + tagline
+    ctx.textAlign = "left";
+    ctx.font = 'bold 58px "Courier New", monospace';
+    ctx.lineWidth = 6; ctx.strokeStyle = CONFIG.COLORS.outline;
+    ctx.strokeText(game.name, -tileW / 2 + 56, -18);
+    ctx.fillStyle = flashing ? "#000" : (on ? CONFIG.COLORS.text : CONFIG.COLORS.dimText);
+    ctx.fillText(game.name, -tileW / 2 + 56, -18);
+    ctx.font = '28px "Courier New", monospace';
+    ctx.fillStyle = flashing ? "#000" : (on ? game.color : CONFIG.COLORS.dimText);
+    ctx.fillText(game.tagline, -tileW / 2 + 58, 36);
+
+    // blinking PRESS START on the highlighted tile
+    if (on && !game.comingSoon && Math.floor(frame / 25) % 2 === 0) {
+      ctx.textAlign = "right";
+      ctx.font = 'bold 30px "Courier New", monospace';
+      ctx.fillStyle = flashing ? "#000" : CONFIG.COLORS.title;
+      ctx.fillText("> PRESS START", tileW / 2 - 26, 36);
+    }
+    ctx.restore();
+  });
+
+  // gamepad indicator in the corner of this player's copy
+  const ok = padConnected(padIndex);
+  ctx.textAlign = "left";
+  ctx.font = 'bold 26px "Courier New", monospace';
+  ctx.fillStyle = ok ? CONFIG.COLORS.padOk : CONFIG.COLORS.padMissing;
+  ctx.fillRect(-500, 433, 18, 18);
+  ctx.fillText(`P${padIndex + 1} ${ok ? "PAD OK" : "NO PAD"}`, -472, 442);
+
+  // hint
+  ctx.textAlign = "right"; ctx.fillStyle = CONFIG.COLORS.dimText;
+  ctx.fillText("STICK = CHOOSE  BUTTON = PLAY", 500, 442);
+}
+
+
+// ---------- main loop ----------
+function loop(now) {
+  frame++;
+  pollGamepads(now);
+  attract(now);
+  drawBackground();
+
+  // Player 1, left end: rotated +90 deg so it reads upright from the left edge
+  ctx.save(); ctx.translate(480, 540);  ctx.rotate(Math.PI / 2);  drawMenuCopy(0, now); ctx.restore();
+  // Player 2, right end: rotated -90 deg so it reads upright from the right edge
+  ctx.save(); ctx.translate(1440, 540); ctx.rotate(-Math.PI / 2); drawMenuCopy(1, now); ctx.restore();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Game folders are downloaded by update.sh, not stored here
+tank-battle/
+air-hockey/
+falling-blocks/
+snake-duel/
+update.log
