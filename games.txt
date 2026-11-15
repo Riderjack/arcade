@@ -1,5 +1,6 @@
 # One game per line:  folder-name   published-website
 # The folder name must match "folder" in menu.html.
-tank-battle      https://retro-tank-battle-ga-i5ch.bolt.host/
-# air-hockey     https://YOUR-AIR-HOCKEY.bolt.host/
-# falling-blocks https://YOUR-FALLING-BLOCKS.bolt.host/
+# All games are built in Replit and published to replit.app.
+tank-battle      https://tabletop-tank-battle.replit.app/
+air-hockey       https://tabletop-air-hockey.replit.app/
+falling-blocks   https://falling-blocks-duel.replit.app/
