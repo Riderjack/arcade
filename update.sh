@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pulls the latest menu/scripts from GitHub, then refreshes every game
 # listed in games.txt from its published website.
-# Safe to run any time:  ~/arcade/update.sh
+# Safe to run any time:  bash ~/arcade/update.sh
 cd "$HOME/arcade" || exit 1
 
 echo "== $(date) =="

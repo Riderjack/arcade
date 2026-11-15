@@ -10,9 +10,10 @@ git remote add origin "$REPO"
 git fetch -q origin
 git checkout -q -B main origin/main -f
 git branch -q --set-upstream-to=origin/main main
-chmod +x start.sh update.sh
+git config core.fileMode false
 mkdir -p "$HOME/.config/labwc"
-grep -q 'arcade/start.sh' "$HOME/.config/labwc/autostart" 2>/dev/null || \
-  echo "$HOME/arcade/start.sh &" >> "$HOME/.config/labwc/autostart"
-./update.sh
+touch "$HOME/.config/labwc/autostart"
+sed -i '/arcade\/start.sh/d' "$HOME/.config/labwc/autostart"
+echo "bash $HOME/arcade/start.sh &" >> "$HOME/.config/labwc/autostart"
+bash ./update.sh
 echo "ARCADE INSTALLED. Reboot with:  systemctl reboot"

@@ -8,7 +8,7 @@ Tabletop arcade, Raspberry Pi 5.
 - `start.sh` – runs at login: update, then open the menu full screen.
 - `install.sh` – one-time setup on a fresh Pi.
 
-**Update the Pi:** reboot it, or run `~/arcade/update.sh`.
+**Update the Pi:** reboot it, or run `bash ~/arcade/update.sh`.
 
 **Add a game:** add a line to `games.txt`, add an entry to `CONFIG.GAMES` in `menu.html`, then reboot the Pi.
 
